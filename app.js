@@ -1,22 +1,50 @@
+//Include Express and Stdlib utils
 const express = require('express');
 const app = express();
+const path = require('path');
 const methodOverride = require("method-override");
+
+//Setup session for cookies and to enable flash
+const session = require('express-session');
+const flash = require('connect-flash');
+
+//ejsMate for boilerplate stuff
 const ejsMate = require('ejs-mate');
+
+//Include JOI validators and custom ExpressError error class
 const Joi = require('joi');
 const {campgroundSchema, reviewSchema} = require('./schemas');
-const catchAsync = require('./utils/catchAsync');
 const ExpressError = require('./utils/ExpressError');
-const Review = require('./models/review');
-app.use(express.urlencoded({extended: true}));
-app.use(methodOverride('_method'));
 
-const Campground = require('./models/campground');
+//Include Router files
+const campgrounds = require('./routes/campgrounds');
+const reviews = require('./routes/reviews');
 
 
-const path = require('path');
+//setup ejs & ejsMate, join views paths when called from anywhere
 app.engine('ejs', ejsMate);
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
+
+
+//Setup static files serving and methodOverride for REST
+app.use(express.urlencoded({extended: true}));
+app.use(methodOverride('_method'));
+app.use(express.static(path.join(__dirname,'public')));
+const sessionConfig = {
+    secret: 'thisshouldbeabettersecret',
+    resave: false,
+    saveUninitialized: true,
+    cookie: {
+        httpOnly: true,
+        expires: Date.now() + 1000*60*60*24*7, //1 Week
+        maxAge: 1000*60*60*24*7,
+    }
+}
+app.use(session(sessionConfig));
+app.use(flash());
+
+//Setup and Connect Mongoose to db
 const mongoose = require('mongoose');
 const { findByIdAndUpdate } = require('./models/campground');
 mongoose.connect('mongodb://localhost:27017/yelpCamp',
@@ -28,88 +56,24 @@ mongoose.connect('mongodb://localhost:27017/yelpCamp',
     console.log("Failed to connect");
     console.log(err);
 })
-
-const validateCampground = (req, res, next) =>{
-    //Create a Joi Schema to validate any campgrounds in req
-    const {error} = campgroundSchema.validate(req.body);
-    if(error){
-        //Build ExpressError message by mapping each message 
-        // for each 'el' in details, then join with a ','
-        const msg = error.details.map(el => el.message).join(',');
-        throw new ExpressError(msg, 400);
-    }
+//---------------------------------------------------------
+//            Real Application Start                     //
+//---------------------------------------------------------
+//Middleware that passes flash msg's to templates
+app.use((req, res, next) => {
+    res.locals.success = req.flash('success');
+    res.locals.error = req.flash('error');
     next();
-}
+})
 
-const validateReview = (req, res, next) =>{
-    //Create a Joi Schema to validate any campgrounds in req
-    const {error} = reviewSchema.validate(req.body);
-    if(error){
-        //Build ExpressError message by mapping each message 
-        // for each 'el' in details, then join with a ','
-        const msg = error.details.map(el => el.message).join(',');
-        throw new ExpressError(msg, 400);
-    }
-    next();
-}
+//any route starting with param1 gets sent to param2
+app.use('/campgrounds',campgrounds);
+app.use('/campgrounds/:id/reviews',reviews);
 
+//Placeholder home
 app.get('/',(req,res)=>{
     res.render('home');
 })
-app.get('/campgrounds', catchAsync(async(req,res)=>{
-   const campgrounds = await Campground.find({});
-    res.render('campgrounds/index', {campgrounds});
-}))
-
-app.get('/campgrounds/new',(req,res)=>{
-    res.render('campgrounds/new');
-})
-app.post('/campgrounds',validateCampground, catchAsync(async(req,res)=>{
-    //if(!req.body.campground) throw new ExpressError('Invalid Campground Data', 400);
-    const campground = new Campground(req.body.campground);
-    await campground.save();
-    res.redirect(302, `/campgrounds/${campground._id}`);
-}))
-app.get('/campgrounds/:id',catchAsync(async(req, res) =>{
-    const {id} = req.params;
-    const campground = await Campground.findById(id).populate('reviews');
-    res.render('campgrounds/show', {campground});
-}))
-
-app.get('/campgrounds/:id/edit',catchAsync(async (req,res)=>{
-    const {id} = req.params;
-    const campground = await Campground.findById(id);
-    res.render('campgrounds/edit',{campground});
-}))
-app.put('/campgrounds/:id',validateCampground, catchAsync(async (req,res)=>{
-    const {id} = req.params;
-    await Campground.findByIdAndUpdate(id, {...req.body.campground});
-    res.redirect(302,`/campgrounds/${id}`);
-}))
-
-app.delete('/campgrounds/:id',catchAsync(async(req,res)=>{
-    const {id} = req.params;
-    await Campground.findByIdAndDelete(id);
-    res.redirect('/campgrounds');
-}))
-
-app.post('/campgrounds/:id/reviews',validateReview,catchAsync(async(req, res) => {
-    const campground = await Campground.findById(req.params.id);
-    //Remember that the name of the inputs is review[attribute], so
-    //it will be parsed under the key'review' below. We did the same w/ campground
-    const review = new Review(req.body.review);
-    campground.reviews.push(review);
-    await review.save();
-    await campground.save();
-    res.redirect(`/campgrounds/${campground._id}`);
-}))
-
-app.delete('/campgrounds/:id/reviews/:reviewId', catchAsync(async (req, res) => {
-    const { id, reviewId } = req.params;
-    await Campground.findByIdAndUpdate(id, { $pull: { reviews: reviewId } });
-    await Review.findByIdAndDelete(reviewId);
-    res.redirect(`/campgrounds/${id}`);
-}))
 
 //For every request, for every path...Will only run if all other paths do not find a match
 app.all('*', (req, res, next) =>{
@@ -123,7 +87,7 @@ app.use((err, req, res, next) =>{
     const {statusCode = 500} = err;
     if(!err.message) err.message = 'Oh no, something went wrong!';
     //Pass error to error.ejs to style our error message
-    //Note that we left error stacktrace in just for development.
+    //Left error stacktrace in just for development.
     res.status(statusCode).render('error',{err})
 })
 
