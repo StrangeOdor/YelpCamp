@@ -8,6 +8,11 @@ const methodOverride = require("method-override");
 const session = require('express-session');
 const flash = require('connect-flash');
 
+//Passport for Auth
+const passport = require('passport');
+const LocalStrategy = require('passport-local');
+const User = require('./models/user');
+
 //ejsMate for boilerplate stuff
 const ejsMate = require('ejs-mate');
 
@@ -17,8 +22,9 @@ const {campgroundSchema, reviewSchema} = require('./schemas');
 const ExpressError = require('./utils/ExpressError');
 
 //Include Router files
-const campgrounds = require('./routes/campgrounds');
-const reviews = require('./routes/reviews');
+const userRoutes = require('./routes/users');
+const campgroundsRoutes = require('./routes/campgrounds');
+const reviewsRoutes = require('./routes/reviews');
 
 
 //setup ejs & ejsMate, join views paths when called from anywhere
@@ -43,6 +49,15 @@ const sessionConfig = {
 }
 app.use(session(sessionConfig));
 app.use(flash());
+app.use(passport.initialize());
+//Consistent login session - no need to login every time
+app.use(passport.session());
+//What to authenticate user against, with what strategy (can have multiple)
+passport.use(new LocalStrategy(User.authenticate()));
+//Get User in session
+passport.serializeUser(User.serializeUser());
+//Get User out of session
+passport.deserializeUser(User.deserializeUser());
 
 //Setup and Connect Mongoose to db
 const mongoose = require('mongoose');
@@ -59,16 +74,24 @@ mongoose.connect('mongodb://localhost:27017/yelpCamp',
 //---------------------------------------------------------
 //            Real Application Start                     //
 //---------------------------------------------------------
-//Middleware that passes flash msg's to templates
+//Middleware that passes current user and flash msg's to all templates
 app.use((req, res, next) => {
+    res.locals.currentUser = req.user;
     res.locals.success = req.flash('success');
     res.locals.error = req.flash('error');
     next();
 })
 
+app.get('/fakeUser', async(req, res) =>{
+    const user = new User({email:'jacob@gmail.com', username: jacobbb});
+    const newUser = await User.register(user, 'chicken');
+    res.send(newUser);
+})
+
 //any route starting with param1 gets sent to param2
-app.use('/campgrounds',campgrounds);
-app.use('/campgrounds/:id/reviews',reviews);
+app.use('/',userRoutes);
+app.use('/campgrounds',campgroundsRoutes);
+app.use('/campgrounds/:id/reviews',reviewsRoutes);
 
 //Placeholder home
 app.get('/',(req,res)=>{
